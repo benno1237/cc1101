@@ -4,7 +4,7 @@ import pigpio
 
 from typing import Optional, List, Union, Final, Tuple
 
-from types import Config, Strobe, StatusRegister, PTR, Modulation, _CS_PINS, State
+from .types import Config, Strobe, StatusRegister, PTR, Modulation, _CS_PINS, State
 
 bitstring.set_lsb0(True)
 
