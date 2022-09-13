@@ -328,7 +328,7 @@ class CC1101:
         self._spi.write_reg(Config.SYNC1, sh)
         self._spi.write_reg(Config.SYNC0, sl)
 
-    def get_sync_word(self) -> List[int, int]:
+    def get_sync_word(self) -> List[int]:
         return self._spi.read_burst(Config.SYNC1, 2)
 
     def set_address(self, address: int):
