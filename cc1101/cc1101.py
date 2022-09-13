@@ -59,20 +59,21 @@ class SPI:
     def write_reg(self, addr: _ALL_TYPES, value: Union[int, bitstring.BitArray]) -> None:
         if isinstance(value, bitstring.BitArray):
             value = value.uint
-        self._pi.spi_write(self._handle, addr.value + value)
+        to_write = (addr.value + value).to_bytes(1, byteorder='big', signed=False)
+        self._pi.spi_write(self._handle, to_write)
 
     def write_burst(self, addr: _ALL_TYPES, value: List[Union[int, bitstring.BitArray]]) -> None:
         for item, idx in enumerate(value):
             if isinstance(item, bitstring.BitArray):
                 value[idx] = item.uint
-        self._pi.spi_write(self._handle, [addr.value | self._WRITE_BURST] + value)
+        to_write = bytearray([addr.value | self._WRITE_BURST] + value)
+        self._pi.spi_write(self._handle, to_write)
 
     def strobe(self, strobe: Strobe) -> None:
         self._pi.spi_write(self._handle, strobe.value)
 
     def read_reg(self, addr: _ALL_TYPES) -> bitstring.BitArray:
         count, data = self._pi.spi_xfer(self._handle, [addr.value | self._READ_SINGLE, 0])
-        print(count, data)
         return bitstring.BitArray(bytes=data, length=8)
 
     def read_burst(self, addr: _ALL_TYPES, num: int) -> List[int]:
