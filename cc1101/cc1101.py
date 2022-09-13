@@ -72,7 +72,8 @@ class SPI:
 
     def read_reg(self, addr: _ALL_TYPES) -> bitstring.BitArray:
         count, data = self._pi.spi_xfer(self._handle, [addr.value | self._READ_SINGLE, 0])
-        return bitstring.BitArray(int=data, length=8)
+        print(count, data)
+        return bitstring.BitArray(bytes=data, length=8)
 
     def read_burst(self, addr: _ALL_TYPES, num: int) -> List[int]:
         count, data = self._pi.spi_xfer(self._handle, [addr.value | self._READ_BURST] + [0] * num)
