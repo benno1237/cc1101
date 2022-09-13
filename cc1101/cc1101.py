@@ -13,7 +13,7 @@ class SPI:
     _READ_SINGLE = 0x80
     _READ_BURST = 0xC0
 
-    _ALL_TYPES: Final[Union] = Union[Config, Strobe, StatusRegister, PTR]
+    _ALL_TYPES = Union[Config, Strobe, StatusRegister, PTR]
 
     def __init__(
             self,
