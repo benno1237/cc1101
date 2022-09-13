@@ -4,7 +4,6 @@ from .types import (
     Config,
     Strobe,
     StatusRegister,
-    SpiPins,
     PTR,
     Modulation,
 )
