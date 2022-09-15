@@ -160,7 +160,7 @@ class CC1101:
         self._spi.write_burst(PTR.TXFIFO, list(payload))
         self._spi.strobe(Strobe.STX)
         self._state = State.TX
-        while self._spi.read_reg(StatusRegister.MARCSTATE) != 0x01:
+        while self._spi.read_reg(StatusRegister.MARCSTATE).uint != 0x01:
             await asyncio.sleep(0.001)
         self._spi.strobe(Strobe.SFTX)
         self.idle()
