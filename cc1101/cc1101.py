@@ -8,6 +8,11 @@ from .types import Config, Strobe, StatusRegister, PTR, Modulation, _CS_PINS, St
 
 bitstring.set_lsb0(True)
 
+
+def bytearray_to_bitstring(data: bytearray) -> bitstring.BitArray:
+    return bitstring.BitArray(int=int.from_bytes(data, byteorder="big"), length=8)
+
+
 class SPI:
     _WRITE_BURST = 0x40
     _READ_SINGLE = 0x80
@@ -59,30 +64,28 @@ class SPI:
     def write_reg(self, addr: _ALL_TYPES, value: Union[int, bitstring.BitArray]) -> None:
         if isinstance(value, bitstring.BitArray):
             value = value.uint
-        to_write = (addr.value + value).to_bytes(1, byteorder='big', signed=False)
-        self._pi.spi_write(self._handle, to_write)
+        self._pi.spi_write(self._handle, [addr.value, value])
 
     def write_burst(self, addr: _ALL_TYPES, value: List[Union[int, bitstring.BitArray]]) -> None:
         for item, idx in enumerate(value):
             if isinstance(item, bitstring.BitArray):
                 value[idx] = item.uint
-        to_write = bytearray([addr.value | self._WRITE_BURST] + value)
-        self._pi.spi_write(self._handle, to_write)
+        self._pi.spi_write(self._handle, [addr.value | self._WRITE_BURST] + value)
 
     def strobe(self, strobe: Strobe) -> None:
-        self._pi.spi_write(self._handle, strobe.value)
+        self._pi.spi_write(self._handle, [strobe.value])
 
     def read_reg(self, addr: _ALL_TYPES) -> bitstring.BitArray:
         count, data = self._pi.spi_xfer(self._handle, [addr.value | self._READ_SINGLE, 0])
-        return bitstring.BitArray(bytes=data, length=8)
+        return bytearray_to_bitstring(data)
 
     def read_burst(self, addr: _ALL_TYPES, num: int) -> List[int]:
         count, data = self._pi.spi_xfer(self._handle, [addr.value | self._READ_BURST] + [0] * num)
         return data
 
-    def read_status_reg(self, addr: StatusRegister) -> int:
+    def read_status_reg(self, addr: StatusRegister) -> bitstring.BitArray:
         count, data = self._pi.spi_xfer(self._handle, [addr.value | self._READ_BURST, 0])
-        return data
+        return bytearray_to_bitstring(data)
 
 
 class ReceivedPacket:
