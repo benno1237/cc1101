@@ -10,7 +10,8 @@ bitstring.set_lsb0(True)
 
 
 def bytearray_to_bitstring(data: bytearray) -> bitstring.BitArray:
-    return bitstring.BitArray(int=int.from_bytes(data, byteorder="big"), length=8)
+    data = data.removeprefix(b' ')
+    return bitstring.BitArray(uint=int.from_bytes(data, byteorder="big"), length=8)
 
 
 class SPI:
