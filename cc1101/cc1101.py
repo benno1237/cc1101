@@ -61,6 +61,7 @@ class SPI:
 
     def close(self) -> None:
         self._pi.spi_close(self._handle)
+        self._pi.stop()
 
     def write_reg(self, addr: _ALL_TYPES, value: Union[int, bitstring.BitArray]) -> None:
         if isinstance(value, bitstring.BitArray):
@@ -118,6 +119,7 @@ class ReceivedPacket:
     def data(self):
         return self._data[2:]
 
+
 class CC1101:
     # ToDo: add a way to check the RX Fifo
     # ToDo: hold Tx/Rx state in memory
@@ -131,85 +133,6 @@ class CC1101:
         self._spi = SPI(spi_channel, spi_cs_channel)
         self._modulation: Modulation = Modulation.GFSK
         self._state = State.IDLE
-
-    def _split_pktctrl1(self) -> Tuple[int, int, int, int]:
-        val = self._spi.read_reg(Config.PKTCTRL1)
-        pqt, crc_af, app_st, adrchk = 0, 0, 0, 0
-        while val >= 4:
-            if val >= 32:
-                pqt += 32
-                val -= 32
-            elif val >= 8:
-                crc_af += 8
-                val -= 8
-            elif val >= 4:
-                app_st += 4
-                val -= 4
-        else:
-            adrchk = val
-        return pqt, crc_af, app_st, adrchk
-
-    def _split_pktctrl0(self) -> Tuple[int, int, int, int]:
-        val = self._spi.read_reg(Config.PKTCTRL1)
-        wdata, pktform, crc_en, lenconf = 0, 0, 0, 0
-        while val >= 4:
-            if val >= 64:
-                wdata += 64
-                val -= 64
-            elif val >= 16:
-                pktform += 16
-                val -= 16
-            elif val >= 4:
-                crc_en += 4
-                val -= 4
-        else:
-            lenconf = val
-        return wdata, pktform, crc_en, lenconf
-
-    def _split_mdmcfg1(self) -> Tuple[int, int, int]:
-        val = self._spi.read_reg(Config.MDMCFG1)
-        fec, pre, chsp = 0, 0, 0
-        while val >= 16:
-            if val >= 128:
-                fec += 128
-                val -= 128
-            elif val >= 16:
-                pre += 16
-                val -= 16
-        else:
-            chsp = val
-        return fec, pre, chsp
-
-    def _split_mdmcfg2(self) -> Tuple[int, int, int, int]:
-        val = self._spi.read_reg(Config.MDMCFG2)
-        dcoff, modfm, manch, syncm = 0, 0, 0, 0
-        while val >= 8:
-            if val >= 128:
-                dcoff += 128
-                val -= 182
-            elif val >= 16:
-                modfm += 16
-                val -= 16
-            elif val >= 8:
-                manch += 8
-                val -= 8
-        else:
-            syncm = val
-        return dcoff, modfm, manch, syncm
-
-    def _split_mdmcfg4(self) -> Tuple[int, int]:
-        val = self._spi.read_reg(Config.MDMCFG4)
-        rxbw, dara = 0, 0
-        while val >= 16:
-            if val >= 64:
-                rxbw += 64
-                val -= 64
-            elif val >= 16:
-                rxbw += 16
-                val -= 16
-        else:
-            dara = val
-        return rxbw, dara
 
     def _set_defaults(self):
         self._spi.write_reg(Config.MCSM0, 20)
@@ -286,18 +209,19 @@ class CC1101:
         self._spi.strobe(Strobe.SRES)
 
     def set_cc_mode(self, cc_mode: bool) -> None:
+        mdmcfg4 = self._spi.read_reg(Config.MDMCFG4)
         if cc_mode is True:
             self._spi.write_reg(Config.IOCFG2, 0x0B)
             self._spi.write_reg(Config.IOCFG0, 0x06)
             self._spi.write_reg(Config.PKTCTRL0, 0x05)
             self._spi.write_reg(Config.MDMCFG3, 0xF8)
-            self._spi.write_reg(Config.MDMCFG4, 11 + self._split_mdmcfg4()[0])
+            self._spi.write_reg(Config.MDMCFG4, 11 + mdmcfg4[3:8].uint)
         else:
             self._spi.write_reg(Config.IOCFG2, 0x0D)
             self._spi.write_reg(Config.IOCFG0, 0x0D)
             self._spi.write_reg(Config.PKTCTRL0, 0x32)
             self._spi.write_reg(Config.MDMCFG3, 0x93)
-            self._spi.write_reg(Config.MDMCFG4, 7 + self._split_mdmcfg4()[0])
+            self._spi.write_reg(Config.MDMCFG4, 7 + mdmcfg4[3:8].uint)
 
     def set_modulation(self, modulation: Modulation) -> None:
         data = self._spi.read_reg(Config.MDMCFG2)
@@ -335,7 +259,8 @@ class CC1101:
         self._spi.write_reg(Config.SYNC0, sl)
 
     def get_sync_word(self) -> List[int]:
-        return self._spi.read_burst(Config.SYNC1, 2)
+        sync = self._spi.read_burst(Config.SYNC1, 2)
+        return [sync[1], sync[2]]
 
     def set_address(self, address: int):
         if address > 256:
@@ -350,80 +275,81 @@ class CC1101:
             print("Error")
         data = self._spi.read_reg(Config.PKTCTRL1)
         data[5:8] = threshold
-        self._spi.write_reg(data)
+        self._spi.write_reg(Config.PKTCTRL1, data)
 
     def get_pqt(self) -> int:
-        pqt, *_ = self._split_pktctrl1()
-        return pqt
+        data = self._spi.read_reg(Config.PKTCTRL1)
+        return data[5:8].uint
 
     def set_crc_af(self, enable: bool):
-        pqt, _, app_st, adrchk = self._split_pktctrl1()
-        crc_af = 8 if enable is True else 0
-        self._spi.write_reg(Config.PKTCTRL1, pqt+crc_af+app_st+adrchk)
+        """Enable automatic flush of RX FIFO when CRC is not OK"""
+        data = self._spi.read_reg(Config.PKTCTRL1)
+        data[3] = enable
+        self._spi.write_reg(Config.PKTCTRL1, data)
 
     def get_crc_af(self) -> bool:
-        _, crc_af, *_ = self._split_pktctrl1()
-        return bool(crc_af)
+        data = self._spi.read_reg(Config.PKTCTRL1)
+        return data[3]
 
     def set_append_status(self, enable: bool):
-        pqt, crc_af, _, adrchk = self._split_pktctrl1()
-        app_st = 4 if enable is True else 0
-        self._spi.write_reg(Config.PKTCTRL1, pqt+crc_af+app_st+adrchk)
+        data = self._spi.read_reg(Config.PKTCTRL1)
+        data[2] = enable
+        self._spi.write_reg(Config.PKTCTRL1, data)
 
     def get_append_status(self) -> bool:
-        _, _, app_st, _ = self._split_pktctrl1()
-        return bool(app_st)
+        data = self._spi.read_reg(Config.PKTCTRL1)
+        return data[2]
 
     def set_address_check(self, value: int):
         if value > 3:
             value = 3
-        pqt, crc_af, app_st, _ = self._split_pktctrl1()
-        adrchk = value
-        self._spi.write_reg(Config.PKTCTRL1, pqt+crc_af+app_st+adrchk)
+        data = self._spi.read_reg(Config.PKTCTRL1)
+        data[0:2] = value
+        self._spi.write_reg(Config.PKTCTRL1, data)
 
     def get_address_check(self) -> int:
-        _, _, _, adrchk = self._split_pktctrl1()
-        return adrchk
+        data = self._spi.read_reg(Config.PKTCTRL1)
+        return data[0:2].uint
 
     def set_white_data(self, enable: bool):
-        _, pktform, crc_en, lenconf = self._split_pktctrl0()
-        wdata = 64 if enable is True else 0
-        self._spi.write_reg(Config.PKTCTRL0, wdata+pktform+crc_en+lenconf)
+        data = self._spi.read_reg(Config.PKTCTRL0)
+        data[6] = enable
+        self._spi.write_reg(Config.PKTCTRL0, data)
 
     def get_white_data(self) -> bool:
-        wdata, *_ = self._split_pktctrl0()
-        return bool(wdata)
+        data = self._spi.read_reg(Config.PKTCTRL0)
+        return data[6]
 
     def set_pkt_format(self, value: int):
         if value > 3:
             value = 3
-        wdata, _, crc_en, lenconf = self._split_pktctrl0()
-        pktform = value * 16
-        self._spi.write_reg(Config.PKTCTRL0, wdata+pktform+crc_en+lenconf)
+        data = self._spi.read_reg(Config.PKTCTRL0)
+        data[4:6] = value
+        self._spi.write_reg(Config.PKTCTRL0, data)
 
     def get_pkt_format(self) -> int:
-        _, pktform, *_ = self._split_pktctrl0()
-        return pktform
+        data = self._spi.read_reg(Config.PKTCTRL0)
+        return data[4:6].uint
 
     def set_crc(self, enable: bool):
-        wdata, pktform, _, lenconf = self._split_pktctrl0()
-        crc_en = 4 if enable is True else 0
-        self._spi.write_reg(Config.PKTCTRL0, wdata+pktform+crc_en+lenconf)
+        data = self._spi.read_reg(Config.PKTCTRL0)
+        data[2] = enable
+        self._spi.write_reg(Config.PKTCTRL0, data)
 
     def get_crc(self) -> bool:
-        _, _, crc, _ = self._split_pktctrl0()
-        return bool(crc)
+        data = self._spi.read_reg(Config.PKTCTRL0)
+        return data[2]
 
     def set_length_config(self, value: int):
         if value > 3:
             value = 3
-        wdata, pktform, crc_en, _ = self._split_pktctrl0()
-        lenconf = value
-        self._spi.write_reg(Config.PKTCTRL0, wdata+pktform+crc_en+lenconf)
+        data = self._spi.read_reg(Config.PKTCTRL0)
+        data[0:2] = value
+        self._spi.write_reg(Config.PKTCTRL0, data)
 
     def get_length_config(self) -> int:
-        _, _, _, lenconf = self._split_pktctrl0()
-        return lenconf
+        data = self._spi.read_reg(Config.PKTCTRL0)
+        return data[0:2].uint
 
     def set_packet_length(self, length: int):
         if length > 255:
@@ -431,64 +357,69 @@ class CC1101:
         self._spi.write_reg(Config.PKTLEN, length)
 
     def get_packet_length(self) -> int:
-        return self._spi.read_reg(Config.PKTLEN)
+        return self._spi.read_reg(Config.PKTLEN).uint
 
     def set_dc_filter(self, enable: bool):
-        _, modfm, manch, syncm = self._split_mdmcfg2()
-        dcoff = 0 if enable is True else 128
-        self._spi.write_reg(Config.MDMCFG2, dcoff+modfm+manch+syncm)
+        data = self._spi.read_reg(Config.MDMCFG2)
+        data[7] = enable
+        self._spi.write_reg(Config.MDMCFG2, data)
 
     def get_dc_filter(self) -> bool:
-        dcoff, *_ = self._split_mdmcfg2()
-        return not bool(dcoff)
+        data = self._spi.read_reg(Config.MDMCFG2)
+        return data[7]
 
     def set_manchester(self, enable: bool):
-        dcoff, modfm, _, syncm = self._split_mdmcfg2()
-        manch = 8 if enable is True else 0
-        self._spi.write_reg(Config.MDMCFG2, dcoff+modfm+manch+syncm)
+        data = self._spi.read_reg(Config.MDMCFG2)
+        data[3] = enable
+        self._spi.write_reg(Config.MDMCFG2, data)
 
     def get_manchester(self) -> bool:
-        _, _, manch, _ = self._split_mdmcfg2()
-        return bool(manch)
+        data = self._spi.read_reg(Config.MDMCFG2)
+        return data[3]
 
     def set_sync_mode(self, syncm: int):
         if syncm > 7:
             syncm = 7
-        dcoff, modfm, manch, _ = self._split_mdmcfg2()
-        self._spi.write_reg(Config.MDMCFG2, dcoff+modfm+manch+syncm)
+        data = self._spi.read_reg(Config.MDMCFG2)
+        data[0:3] = syncm
+        self._spi.write_reg(Config.MDMCFG2, data)
 
     def get_sync_mode(self) -> int:
-        _, _, _, syncm = self._split_mdmcfg2()
-        return syncm
+        data = self._spi.read_reg(Config.MDMCFG2)
+        return data[0:3].uint
 
     def set_fec(self, enable: bool):
-        _, pre, chsp = self._split_mdmcfg1()
-        fec = 128 if enable is True else 0
-        self._spi.write_reg(Config.MDMCFG1, fec+pre+chsp)
+        data = self._spi.read_reg(Config.MDMCFG1)
+        data[7] = enable
+        self._spi.write_reg(Config.MDMCFG1, data)
 
     def get_fec(self) -> bool:
-        fec, *_ = self._split_mdmcfg1()
-        return bool(fec)
+        data = self._spi.read_reg(Config.MDMCFG1)
+        return data[7]
 
     def set_pre(self, value: int):
         if value > 7:
             value = 7
-        fec, _, chsp = self._split_mdmcfg1()
-        self._spi.write_reg(Config.MDMCFG1, fec+value*7+chsp)
+        data = self._spi.read_reg(Config.MDMCFG1)
+        data[4:7] = value
+        self._spi.write_reg(Config.MDMCFG1, data)
 
     def get_pre(self) -> int:
-        _, pre, _ = self._split_mdmcfg1()
-        return pre
+        data = self._spi.read_reg(Config.MDMCFG1)
+        return data[4:7].uint
 
     def set_channel(self, channel: int):
         if channel > 255:
             print("Error")
         self._spi.write_reg(Config.CHANNR, channel)
 
+    def get_channel(self) -> int:
+        return self._spi.read_reg(Config.CHANNR).uint
+
     def set_channel_spacing(self, spacing: float):
         if spacing < 25.390625 or spacing > 405.456543:
             print("Error")
-        _, fec, pre = self._split_mdmcfg1()
+        data = self._spi.read_reg(Config.MDMCFG1)
         mdmcfg0 = 0
         chsp = 0
 
@@ -502,16 +433,17 @@ class CC1101:
                 chsp += 1
                 spacing /= 2
 
-        self._spi.write_reg(Config.MDMCFG1, chsp+fec+pre)
+        data[0:2] = chsp
+        self._spi.write_reg(Config.MDMCFG1, data)
         self._spi.write_reg(Config.MDMCFG0, mdmcfg0)
 
     def get_channel_spacing(self) -> float:
-        csm = self._spi.read_reg(Config.MDMCFG0)
-        cse, *_ = self._split_mdmcfg1()
-        return (self._XOSC_FREQ / 2**18) * (256 + csm) * 2**cse
+        csm = self._spi.read_reg(Config.MDMCFG0).uint
+        data = self._spi.read_reg(Config.MDMCFG1)
+        return (self._XOSC_FREQ / 2**18) * (256 + csm) * 2**data[0:2].uint
 
     def set_rx_bandwidth(self, bandwidth: float):
-        _, dara = self._split_mdmcfg4()
+        data = self._spi.read_reg(Config.MDMCFG4)
         s1, s2 = 3, 3
         for _ in range(3):
             if bandwidth > 101.5625:
@@ -526,16 +458,17 @@ class CC1101:
             else:
                 break
         rxbw = s1 * 64 + s2 * 16
-        self._spi.write_reg(Config.MDMCFG4, rxbw+dara)
+        data[4:8] = rxbw
+        self._spi.write_reg(Config.MDMCFG4, data)
 
     def get_rx_bandwidth(self) -> float:
-        rxbw = format(self._split_mdmcfg4()[0], "02X")
+        rxbw = format((self._spi.read_reg(Config.MDMCFG4)[4:8]).uint, "02X")
         return self._XOSC_FREQ / (8 * (4 + int(rxbw[1])) * 2**int(rxbw[0]))
 
     def set_data_rate(self, data_rate: float):
         if data_rate < 0.0247955 or data_rate > 1621.83:
             print("Error")
-        rxbw, _ = self._split_mdmcfg4()
+        data = self._spi.read_reg(Config.MDMCFG4)
         dara = 0
         mdmcfg3 = 0
         for _ in range(20):
@@ -547,12 +480,14 @@ class CC1101:
             else:
                 dara += 1
                 data_rate /= 2
-        self._spi.write_reg(Config.MDMCFG4, rxbw+dara)
+        data[0:4] = dara
+        self._spi.write_reg(Config.MDMCFG4, data)
         self._spi.write_reg(Config.MDMCFG3, mdmcfg3)
 
     def get_data_rate(self) -> float:
-        dm = self._spi.read_reg(Config.MDMCFG3)
-        _, de = self._split_mdmcfg4()
+        dm = self._spi.read_reg(Config.MDMCFG3).uint
+        data = self._spi.read_reg(Config.MDMCFG4)
+        de = data[0:4].uint
         dr = (((256 + dm) * 2**de) / 2**28) * self._XOSC_FREQ
         return dr
 
@@ -575,11 +510,11 @@ class CC1101:
         self._spi.write_reg(Config.DEVIATN, c)
 
     def get_deviation(self) -> float:
-        d = format(self._spi.read_reg(Config.DEVIATN), "02X")
+        d = format(self._spi.read_reg(Config.DEVIATN).uint, "02X")
         return (self._XOSC_FREQ / 2**17) * (8 + int(d[1])) * 2**int(d[0])
 
-    def get_rssi(self):
-        rssi = self._spi.read_status_reg(StatusRegister.RSSI)
+    def get_rssi(self) -> int:
+        rssi = self._spi.read_status_reg(StatusRegister.RSSI).uint
         if rssi >= 128:
             rssi = (rssi - 256) / 2 - 74
         else:
@@ -587,5 +522,5 @@ class CC1101:
 
         return rssi
 
-    def get_lqi(self):
-        return self._spi.read_status_reg(StatusRegister.LQI)
+    def get_lqi(self) -> int:
+        return self._spi.read_status_reg(StatusRegister.LQI).uint
