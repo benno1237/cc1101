@@ -1,6 +1,6 @@
 import asyncio
 import bitstring
-import pigpio
+import spidev
 
 from typing import Optional, List, Union, Final, Tuple
 
@@ -10,7 +10,7 @@ bitstring.set_lsb0(True)
 
 
 def bytearray_to_bitstring(data: bytearray) -> bitstring.BitArray:
-    data = data.removeprefix(b' ')
+    data = b''.join(data[1:])
     return bitstring.BitArray(uint=int.from_bytes(data, byteorder="big"), length=8)
 
 
@@ -30,7 +30,7 @@ class SPI:
         self._spi_cs_channel: int = spi_cs_channel
         self._handle: Optional[int] = None
 
-        self._pi = pigpio.pi()
+        self._spi = spidev.SpiDev()
 
     @property
     def MISO(self):
@@ -57,36 +57,36 @@ class SPI:
         return self._spi_cs_channel
 
     def begin(self, baud: int) -> None:
-        self._handle = self._pi.spi_open(self._spi_channel, baud, self._spi_cs_channel)
+        self._spi.open(self._spi_channel, self._spi_cs_channel)
 
     def close(self) -> None:
-        self._pi.spi_close(self._handle)
-        self._pi.stop()
+        self._spi.close()
 
     def write_reg(self, addr: _ALL_TYPES, value: Union[int, bitstring.BitArray]) -> None:
         if isinstance(value, bitstring.BitArray):
             value = value.uint
-        self._pi.spi_write(self._handle, [addr.value, value])
+        self._spi.xfer([addr.value, value])
 
     def write_burst(self, addr: _ALL_TYPES, value: List[Union[int, bitstring.BitArray]]) -> None:
         for item, idx in enumerate(value):
             if isinstance(item, bitstring.BitArray):
                 value[idx] = item.uint
-        self._pi.spi_write(self._handle, [addr.value | self._WRITE_BURST] + value)
+        print(value)
+        self._spi.xfer([addr.value | self._WRITE_BURST] + value)
 
     def strobe(self, strobe: Strobe) -> None:
-        self._pi.spi_write(self._handle, [strobe.value])
+        self._spi.write([strobe.value])
 
     def read_reg(self, addr: _ALL_TYPES) -> bitstring.BitArray:
-        count, data = self._pi.spi_xfer(self._handle, [addr.value | self._READ_SINGLE, 0])
+        data = self._spi.xfer([addr.value | self._READ_SINGLE, 0])
         return bytearray_to_bitstring(data)
 
     def read_burst(self, addr: _ALL_TYPES, num: int) -> List[int]:
-        count, data = self._pi.spi_xfer(self._handle, [addr.value | self._READ_BURST] + [0] * num)
+        data = self._spi.xfer([addr.value | self._READ_BURST] + [0] * num)
         return data
 
     def read_status_reg(self, addr: StatusRegister) -> bitstring.BitArray:
-        count, data = self._pi.spi_xfer(self._handle, [addr.value | self._READ_BURST, 0])
+        data = self._spi.xfer([addr.value | self._READ_BURST, 0])
         return bytearray_to_bitstring(data)
 
 
@@ -137,9 +137,9 @@ class CC1101:
     def _set_defaults(self):
         self._spi.write_reg(Config.MCSM0, 20)
 
-    def begin(self, kbaud: int) -> bool:
-        self._spi.begin(kbaud * 1000)
-        return bool(self._spi.read_status_reg(StatusRegister.VERSION))
+    def begin(self) -> bool:
+        self._spi.begin(0)
+        return bool(self._spi.read_status_reg(StatusRegister.VERSION).uint)
 
     def close(self):
         self._spi.close()
@@ -160,8 +160,9 @@ class CC1101:
         self._spi.write_burst(PTR.TXFIFO, list(payload))
         self._spi.strobe(Strobe.STX)
         self._state = State.TX
-        while self._spi.read_reg(StatusRegister.MARCSTATE).uint != 0x01:
-            await asyncio.sleep(0.001)
+        # while self._spi.read_reg(StatusRegister.MARCSTATE).uint != 0x01:
+        #     await asyncio.sleep(0.001)
+        await asyncio.sleep(0.01)
         self._spi.strobe(Strobe.SFTX)
         self.idle()
 
@@ -200,12 +201,7 @@ class CC1101:
             return True
         return False
 
-    async def reset(self):
-        self._spi._pi.write(self._spi.CS, 0)
-        await asyncio.sleep(0.02)
-        self._spi._pi.write(self._spi.CS, 1)
-        # while self.pi.read(self._spi.MISO):
-        #     time.sleep(0.001)
+    def reset(self):
         self._spi.strobe(Strobe.SRES)
 
     def set_cc_mode(self, cc_mode: bool) -> None:
@@ -244,11 +240,12 @@ class CC1101:
 
     def set_base_frequency(self, frequency: float):
         f = int(frequency / 0.0003967285157216339)
-        f_reg_val = list(f.to_bytes(length=3, byteorder="big"))
+        f_reg_val = list(f.to_bytes(length=3, byteorder="big", signed=False))
         self._spi.write_burst(Config.FREQ2, f_reg_val)
 
     def get_base_frequency(self) -> float:
         freq_bytes = self._spi.read_burst(Config.FREQ2, num=3)
+        freq_bytes = b''.join(freq_bytes[1:])
         freq = int.from_bytes(freq_bytes, byteorder="big", signed=False)
         return freq * 0.0003967285157216339
 
