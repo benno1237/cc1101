@@ -1,10 +1,5 @@
 from enum import IntEnum
 
-_CS_PINS = {
-    0: {0: 8, 1: 7},
-    1: {0: 18, 1: 17, 2: 16},
-}
-
 
 class Config(IntEnum):
     IOCFG2 = 0x00
@@ -105,3 +100,9 @@ class State(IntEnum):
     IDLE = 0
     RX = 1
     TX = 2
+
+
+class PacketLengthMode(IntEnum):
+    FIXED = 0
+    VARIABLE = 1
+    INFINITE = 2

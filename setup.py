@@ -12,7 +12,7 @@ setup(
     download_url="https://github.com/benno1237/cc1101/archive/refs/tags/0.0.1.tar.gz",
     keywords=["CC1101"],
     install_requires=[
-        "python3-pigpio",
+        "pigpio",
         "bitstring",
     ],
     extras_require={
